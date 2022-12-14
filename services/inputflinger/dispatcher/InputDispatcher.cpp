@@ -1500,6 +1500,11 @@ int32_t InputDispatcher::findFocusedWindowTargetsLocked(nsecs_t currentTime,
         return INPUT_EVENT_INJECTION_FAILED;
     }
 
+    // Drop key events if requested by input feature
+    if (focusedWindowHandle != nullptr && shouldDropInput(entry, focusedWindowHandle)) {
+        return INPUT_EVENT_INJECTION_FAILED;
+    }
+
     // Compatibility behavior: raise ANR if there is a focused application, but no focused window.
     // Only start counting when we have a focused event to dispatch. The ANR is canceled if we
     // start interacting with another application via touch (app switch). This code can be removed
@@ -1730,6 +1735,11 @@ int32_t InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime,
             }
         }
 
+        // Drop touch events if requested by input feature
+        if (newTouchedWindowHandle != nullptr && shouldDropInput(entry, newTouchedWindowHandle)) {
+            newTouchedWindowHandle = nullptr;
+        }
+
         // Also don't send the new touch event to unresponsive gesture monitors
         newGestureMonitors = selectResponsiveMonitorsLocked(newGestureMonitors);
 
@@ -1794,6 +1804,13 @@ int32_t InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime,
                     tempTouchState.getFirstForegroundWindowHandle();
             sp<InputWindowHandle> newTouchedWindowHandle =
                     findTouchedWindowAtLocked(displayId, x, y, &tempTouchState);
+
+            // Drop touch events if requested by input feature
+            if (newTouchedWindowHandle != nullptr &&
+                shouldDropInput(entry, newTouchedWindowHandle)) {
+                newTouchedWindowHandle = nullptr;
+            }
+
             if (oldTouchedWindowHandle != newTouchedWindowHandle &&
                 oldTouchedWindowHandle != nullptr && newTouchedWindowHandle != nullptr) {
                 if (DEBUG_FOCUS) {
@@ -2130,7 +2147,7 @@ static bool canBeObscuredBy(const sp<InputWindowHandle>& windowHandle,
         // If ownerPid is the same we don't generate occlusion events as there
         // is no in-process security boundary.
         return false;
-    } else if (otherInfo->isTrustedOverlay()) {
+    } else if (otherInfo->trustedOverlay) {
         return false;
     } else if (otherInfo->displayId != info->displayId) {
         return false;
@@ -5156,6 +5173,18 @@ bool InputDispatcher::waitForIdle() {
     mLooper->wake();
     std::cv_status result = mDispatcherEnteredIdle.wait_for(lock, TIMEOUT);
     return result == std::cv_status::no_timeout;
+}
+
+bool InputDispatcher::shouldDropInput(const EventEntry& entry,
+                                      const sp<InputWindowHandle>& windowHandle) const {
+    if (windowHandle->getInfo()->inputFeatures & InputWindowInfo::INPUT_FEATURE_DROP_INPUT) {
+        ALOGW("Dropping %s event targeting %s as requested by inputFeatures=0x%08x on display "
+              "%" PRId32 ".",
+              EventEntry::typeToString(entry.type), windowHandle->getName().c_str(),
+              windowHandle->getInfo()->inputFeatures, windowHandle->getInfo()->displayId);
+        return true;
+    }
+    return false;
 }
 
 } // namespace android::inputdispatcher
